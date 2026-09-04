@@ -220,6 +220,12 @@ function renderState() {
   $('trans').textContent = '点击查看释义'
   $('trans').classList.add('hidden')
   $('book').textContent = cur.bookName
+  renderCounter()
+}
+
+// 计数/提示行单独渲染：标记认识/不认识后立即刷新，不必等切到下一个词
+function renderCounter() {
+  if (!cur || cur.empty) return
   $('counter').textContent = `${cur.idx + 1}/${cur.total} · ✓${cur.knownCount || 0} ✗${cur.wrongCount || 0}`
   const hint = $('hint')
   if (cur.knownCount === cur.total) hint.textContent = '本书已全部标记"已会"，可在托盘换书'
@@ -250,7 +256,7 @@ async function doMark(known) {
   animating = true
   try {
     const r = known ? await window.moyu.markKnown() : await window.moyu.markWrong()
-    if (r && r.ok) { cur.knownCount = r.knownCount; cur.wrongCount = r.wrongCount }
+    if (r && r.ok) { cur.knownCount = r.knownCount; cur.wrongCount = r.wrongCount; renderCounter() }
     if (known) {
       // 碎裂动画 → 拼回原词 → 显示释义；停留在当前词，不自动跳转
       const w = $('word')
