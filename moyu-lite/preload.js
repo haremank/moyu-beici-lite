@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('moyu', {
   next: (dir) => ipcRenderer.invoke('float:next', { dir }),
   markKnown: () => ipcRenderer.invoke('float:markKnown'),
   markWrong: () => ipcRenderer.invoke('float:markWrong'),
+  markMaster: () => ipcRenderer.invoke('float:markMaster'),
   moveBy: (dx, dy) => ipcRenderer.invoke('float:moveBy', { dx, dy }),
   growBy: (dx, dy) => ipcRenderer.invoke('float:growBy', { dx, dy }),
   hover: (inside) => ipcRenderer.invoke('float:hover', { inside }),

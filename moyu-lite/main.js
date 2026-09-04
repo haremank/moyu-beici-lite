@@ -24,6 +24,7 @@ const DEFAULT_CONFIG = {
   clickThrough: 'Alt+C', // 鼠标穿透
   keyKnow: 'Alt+2', // 标记认识
   keyWrong: 'Alt+1', // 标记不认识
+  keyMaster: 'Alt+3', // 标记熟记（该词从此不再出现）
   autoAdvanceSeconds: 60,
   hideOnMouseOut: false,
   opacity: 0.95, // 悬停时整窗不透明度
@@ -199,25 +200,35 @@ async function pollMainSelection(force = false) {
 }
 
 // 当前生效的词书：跟随模式用 syncedBook，固定模式用 config.bookId
+// 熟记（state.mastered）是词级别的全局状态：标记过的词在所有词书中不再出现
 function getActiveBook() {
+  state.mastered = state.mastered || {}
+  let entry = null
   if (config.bookId == null && syncedBook.words && syncedBook.words.length) {
-    return { id: `sync:${syncedBook.dictId}#${syncedBook.chapter}`, name: syncedBook.name, words: syncedBook.words }
+    entry = { id: `sync:${syncedBook.dictId}#${syncedBook.chapter}`, name: syncedBook.name, words: syncedBook.words }
+  } else {
+    const bookId = fallbackBookId()
+    const loaded = bookId ? readBookEntries(bookId) : null
+    if (loaded) entry = { id: bookId, name: loaded.book.name, words: loaded.words }
   }
-  const bookId = fallbackBookId()
-  const loaded = bookId ? readBookEntries(bookId) : null
-  if (!loaded) return null
-  return { id: bookId, name: loaded.book.name, words: loaded.words }
+  if (!entry) return null
+  const words = entry.words.filter((w) => !state.mastered[w.name])
+  if (!words.length) return { id: entry.id, name: entry.name, words, allMastered: true }
+  return { id: entry.id, name: entry.name, words }
 }
 
 // ---------- 悬浮窗数据 IPC ----------
 ipcMain.handle('float:getData', () => {
   const active = getActiveBook()
   if (!active || !active.words.length) {
-    return { empty: true, message: '暂无词书：请在托盘菜单「导入词书」' }
+    const msg = active && active.allMastered ? '本章已全部熟记 ✓ 切换章节继续' : '暂无词书：请在托盘菜单「导入词书」'
+    return { empty: true, message: msg }
   }
-  const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {} })
+  const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {}, wrong: {} })
+  st.wrong = st.wrong || {}
   st.idx = Math.min(st.idx || 0, active.words.length - 1)
   const knownCount = Object.keys(st.known).length
+  const wrongCount = Object.keys(st.wrong).length
   return {
     empty: false,
     bookId: active.id,
@@ -225,7 +236,8 @@ ipcMain.handle('float:getData', () => {
     total: active.words.length,
     idx: st.idx,
     knownCount,
-    wrongCount: Object.keys(st.wrong || {}).length,
+    wrongCount,
+    masteredCount: Object.keys(state.mastered).length,
     word: active.words[st.idx],
     autoAdvanceSeconds: config.autoAdvanceSeconds,
     hideOnMouseOut: config.hideOnMouseOut,
@@ -251,11 +263,12 @@ ipcMain.handle('float:next', (e, { dir = 1 } = {}) => {
   const active = getActiveBook()
   if (!active || !active.words.length) return { ok: false }
   const { words } = active
-  const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {} })
+  const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {}, wrong: {} })
+  st.wrong = st.wrong || {}
   let tries = 0
   do { st.idx = (st.idx + dir + words.length) % words.length; tries++ } while (st.known[words[st.idx].name] && tries < words.length)
   saveState()
-  return { ok: true, idx: st.idx, total: words.length, knownCount: Object.keys(st.known).length, wrongCount: Object.keys(st.wrong || {}).length, word: words[st.idx] }
+  return { ok: true, idx: st.idx, total: words.length, knownCount: Object.keys(st.known).length, wrongCount: Object.keys(st.wrong).length, word: words[st.idx] }
 })
 ipcMain.handle('float:markKnown', () => {
   const active = getActiveBook()
@@ -263,7 +276,9 @@ ipcMain.handle('float:markKnown', () => {
   const { words } = active
   const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {}, wrong: {} })
   st.wrong = st.wrong || {}
-  st.known[words[st.idx].name] = true
+  const name = words[st.idx].name
+  st.known[name] = true
+  delete st.wrong[name] // 修正：之前点过"不认识"的话改正过来
   saveState()
   return { ok: true, knownCount: Object.keys(st.known).length, wrongCount: Object.keys(st.wrong).length }
 })
@@ -273,9 +288,25 @@ ipcMain.handle('float:markWrong', () => {
   const { words } = active
   const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {}, wrong: {} })
   st.wrong = st.wrong || {}
-  st.wrong[words[st.idx].name] = (st.wrong[words[st.idx].name] || 0) + 1
+  const name = words[st.idx].name
+  st.wrong[name] = (st.wrong[name] || 0) + 1
+  delete st.known[name] // 修正：之前点过"认识"的话改正过来
   saveState()
   return { ok: true, knownCount: Object.keys(st.known).length, wrongCount: Object.keys(st.wrong).length }
+})
+ipcMain.handle('float:markMaster', () => {
+  const active = getActiveBook()
+  if (!active || !active.words.length) return { ok: false }
+  const { words } = active
+  const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {}, wrong: {} })
+  st.wrong = st.wrong || {}
+  const name = words[st.idx].name
+  state.mastered = state.mastered || {}
+  state.mastered[name] = true // 词级永久状态：所有词书中不再出现
+  delete st.known[name]
+  delete st.wrong[name]
+  saveState()
+  return { ok: true, knownCount: Object.keys(st.known).length, wrongCount: Object.keys(st.wrong).length, masteredCount: Object.keys(state.mastered).length }
 })
 ipcMain.handle('float:growBy', (e, { dx = 0, dy = 0 } = {}) => {
   if (!floatWin) return { ok: false }
@@ -547,6 +578,7 @@ function registerShortcuts() {
     [config.clickThrough, toggleClickThrough],
     [config.keyKnow, () => floatEvent('do-know')],
     [config.keyWrong, () => floatEvent('do-wrong')],
+    [config.keyMaster, () => floatEvent('do-master')],
   ]
   for (const [accel, fn] of pairs) {
     try {
