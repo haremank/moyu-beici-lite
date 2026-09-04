@@ -338,17 +338,24 @@ ipcMain.handle('float:next', (e, { dir = 1 } = {}) => {
   const { words } = active
   const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {}, wrong: {} })
   st.wrong = st.wrong || {}
-  // 错词优先重现：前进离开一个错词时，把它插到身后第 2 位，1~2 词内再次出现；
-  // 在"离开"时才动词序，主进程光标与渲染层停留显示的词全程一致（改标认识后自然不再重现）
-  const leaving = words[st.idx]
-  if (dir === 1 && st.wrong[leaving.name] && !st.known[leaving.name]) {
-    words.splice(st.idx, 1)
-    const q = Math.min(st.idx + 2, words.length)
-    words.splice(q, 0, leaving)
-    log('错词重现:', leaving.name, '→ 第', q + 1, '位（共', words.length, '词）')
-  }
+  // 错词优先重现：前进离开一个错词时，把它挪到新位置身后第 2 位，1~2 词内再次出现。
+  // ⚠️ 必须先推进光标（含跳过已认识词）、后挪词：若先挪词再推进，跳词可能正好落回被挪的词，
+  // 表现为"右键只取消释义、不换词"；挪词时对新光标做位置补偿，插入点恒在光标身后
+  const leftName = words[st.idx].name
+  const wasWrong = dir === 1 && !!(st.wrong[leftName] && !st.known[leftName])
   let tries = 0
   do { st.idx = (st.idx + dir + words.length) % words.length; tries++ } while (st.known[words[st.idx].name] && tries < words.length)
+  if (wasWrong && words[st.idx].name !== leftName) {
+    const p = words.findIndex((w) => w.name === leftName)
+    if (p >= 0) {
+      const wObj = words[p]
+      words.splice(p, 1)
+      if (p < st.idx) st.idx-- // 被挪的词在新光标左侧：光标左移补偿
+      const q = Math.min(st.idx + 2, words.length)
+      words.splice(q, 0, wObj)
+      log('错词重现:', leftName, '→ 第', q + 1, '位（共', words.length, '词）')
+    }
+  }
   saveState()
   return { ok: true, idx: st.idx, total: words.length, knownCount: Object.keys(st.known).length, wrongCount: Object.keys(st.wrong).length, word: words[st.idx] }
 })
