@@ -30,6 +30,7 @@ jobs:
 
       - name: Build installer (electron-builder win64 NSIS)
         working-directory: moyu-lite
+        shell: bash
         # 安装包版本号跟随 tag（去掉 v 前缀），如 tag v1.2.3 → ...-1.2.3-win64-setup.exe
         run: |
           npm ci
