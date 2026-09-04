@@ -1,6 +1,6 @@
 {
   "name": "moyu-lite",
-  "version": "1.0.0",
+  "version": "1.0.5",
   "description": "摸鱼背词Lite — 离线摸鱼背单词桌面应用（qwerty-learner 桌面壳：悬浮窗 + 老板键 + 自定义词书）",
   "main": "main.js",
   "license": "GPL-3.0",

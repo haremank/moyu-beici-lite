@@ -54,7 +54,8 @@
     to { transform: translate(var(--tx), var(--ty)) rotate(var(--rot)); opacity: 0; }
   }
   .trans { margin-top: 6px; font-size: var(--trans-size, 15px); font-weight: var(--trans-weight, 400); color: var(--trans-color, var(--sub-color)); line-height: 1.35;
-           max-height: 44px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+           display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--trans-lines, 2);
+           overflow: hidden; white-space: normal; word-break: break-word; max-height: calc(var(--trans-lines, 2) * 1.4em); }
   .trans.hidden { font-style: italic; }
   .hint { font-size: 10px; color: var(--sub-color); display: var(--hint-display, block); }
   body.mini .card { padding: 4px 12px; }
@@ -126,6 +127,7 @@
     <div class="row"><span>单词悬停透明度</span><input type="range" id="sTextHover" min="0" max="100" step="1"><b id="vTextHover"></b></div>
     <div class="row"><span>单词字体/字重</span><select id="selFont"></select><select id="selWeight"></select><span style="width:auto">发光</span><input type="checkbox" id="cGlow"></div>
     <div class="row"><span>释义大小/字重</span><input type="range" id="sTransSize" min="10" max="26" step="1"><b id="vTransSize"></b><input type="range" id="sTransWeight" min="300" max="900" step="100"><b id="vTransWeight"></b></div>
+    <div class="row"><span>释义行数</span><select id="selTransLines"><option value="1">1 行（单行省略）</option><option value="2">2 行</option><option value="3">3 行</option></select></div>
     <div class="sec">颜色</div>
     <div class="row colorrow"><span>单词</span><input type="color" id="cWord"><span>释义</span><input type="color" id="cTrans"><span>辅助</span><input type="color" id="cSub"><span>背景</span><input type="color" id="cBg"></div>
     <div class="sec">按键开关</div>
@@ -143,7 +145,7 @@ let panelOpen = false
 
 const $ = (id) => document.getElementById(id)
 const HINT_DEFAULT = '左键 翻释义 · 右键/滚轮 切词 · Alt+2 认识 / Alt+1 不认识 · 右上角⚙ 设置'
-const cfgExtra = { idleOpacity: 0.15, hoverOpacity: 0.95, textIdleOpacity: 0, textHoverOpacity: 1, textGlow: true, wordColor: '#7ae6ac', subColor: '#aeb7c2', transColor: '#d7dce2', transSize: 15, transWeight: 400, hideHint: false, hideKnowBtns: false, wheelSwitch: true, bgColor: '#1e2228', wordFont: 'Consolas', wordFontWeight: 800 }
+const cfgExtra = { idleOpacity: 0.15, hoverOpacity: 0.95, textIdleOpacity: 0, textHoverOpacity: 1, textGlow: true, wordColor: '#7ae6ac', subColor: '#aeb7c2', transColor: '#d7dce2', transSize: 15, transWeight: 400, transLines: 2, hideHint: false, hideKnowBtns: false, wheelSwitch: true, bgColor: '#1e2228', wordFont: 'Consolas', wordFontWeight: 800 }
 
 
 function hexToRgba(hex, a) {
@@ -171,6 +173,7 @@ function applyColors() {
   r.setProperty('--trans-color', cfgExtra.transColor)
   r.setProperty('--trans-size', cfgExtra.transSize + 'px')
   r.setProperty('--trans-weight', String(cfgExtra.transWeight))
+  r.setProperty('--trans-lines', String(Math.min(3, Math.max(1, Number(cfgExtra.transLines) || 2))))
   r.setProperty('--hint-display', cfgExtra.hideHint ? 'none' : 'block')
   r.setProperty('--btnrow-display', cfgExtra.hideKnowBtns ? 'none' : 'flex')
 }
@@ -196,6 +199,7 @@ function renderWord(data) {
   cfgExtra.transColor = data.transColor
   cfgExtra.transSize = data.transSize
   cfgExtra.transWeight = data.transWeight
+  cfgExtra.transLines = data.transLines
   cfgExtra.hideHint = data.hideHint
   cfgExtra.hideKnowBtns = data.hideKnowBtns
   cfgExtra.wheelSwitch = data.wheelSwitch
@@ -391,6 +395,7 @@ function syncPanel() {
   $('vTransSize').textContent = cfgExtra.transSize + 'px'
   $('sTransWeight').value = cfgExtra.transWeight
   $('vTransWeight').textContent = cfgExtra.transWeight
+  $('selTransLines').value = String(Math.min(3, Math.max(1, Number(cfgExtra.transLines) || 2)))
   $('cHideHint').checked = !!cfgExtra.hideHint
   $('cHideKnow').checked = !!cfgExtra.hideKnowBtns
   $('cWheel').checked = !!cfgExtra.wheelSwitch
@@ -402,14 +407,14 @@ function syncPanel() {
 function togglePanel(force) {
   panelOpen = force != null ? force : !panelOpen
   panel.classList.toggle('hidden2', !panelOpen)
-  window.moyu.expand(panelOpen ? 460 : 150)
+  window.moyu.expand(panelOpen ? 500 : 150)
   if (panelOpen) syncPanel()
 }
 $('gear').addEventListener('mousedown', (e) => e.stopPropagation())
 $('gear').addEventListener('mouseup', (e) => e.stopPropagation())
 $('gear').addEventListener('click', (e) => { e.stopPropagation(); togglePanel() })
 $('done').addEventListener('click', (e) => { e.stopPropagation(); togglePanel(false) })
-const APPEARANCE_DEFAULTS = { idleOpacity: 0.15, hoverOpacity: 0.95, textIdleOpacity: 0, textHoverOpacity: 1, textGlow: true, wordColor: '#7ae6ac', subColor: '#aeb7c2', transColor: '#d7dce2', transSize: 15, transWeight: 400, hideHint: false, hideKnowBtns: false, wheelSwitch: true, bgColor: '#1e2228', wordFont: 'Consolas', wordFontWeight: 800 }
+const APPEARANCE_DEFAULTS = { idleOpacity: 0.15, hoverOpacity: 0.95, textIdleOpacity: 0, textHoverOpacity: 1, textGlow: true, wordColor: '#7ae6ac', subColor: '#aeb7c2', transColor: '#d7dce2', transSize: 15, transWeight: 400, transLines: 2, hideHint: false, hideKnowBtns: false, wheelSwitch: true, bgColor: '#1e2228', wordFont: 'Consolas', wordFontWeight: 800 }
 $('reset').addEventListener('click', (e) => {
   e.stopPropagation()
   Object.assign(cfgExtra, APPEARANCE_DEFAULTS)
@@ -422,6 +427,7 @@ $('selFont').addEventListener('change', (e) => { cfgExtra.wordFont = e.target.va
 $('selWeight').addEventListener('change', (e) => { cfgExtra.wordFontWeight = Number(e.target.value); applyColors(); window.moyu.patchConfig('wordFontWeight', cfgExtra.wordFontWeight) })
 $('sTransSize').addEventListener('input', (e) => { cfgExtra.transSize = Number(e.target.value); $('vTransSize').textContent = e.target.value + 'px'; applyColors(); window.moyu.patchConfig('transSize', cfgExtra.transSize) })
 $('sTransWeight').addEventListener('input', (e) => { cfgExtra.transWeight = Number(e.target.value); $('vTransWeight').textContent = e.target.value; applyColors(); window.moyu.patchConfig('transWeight', cfgExtra.transWeight) })
+$('selTransLines').addEventListener('change', (e) => { cfgExtra.transLines = Number(e.target.value); applyColors(); window.moyu.patchConfig('transLines', cfgExtra.transLines) })
 $('cTrans').addEventListener('input', (e) => { cfgExtra.transColor = e.target.value; applyColors(); window.moyu.patchConfig('transColor', cfgExtra.transColor) })
 $('cHideHint').addEventListener('change', (e) => { cfgExtra.hideHint = e.target.checked; applyColors(); window.moyu.patchConfig('hideHint', cfgExtra.hideHint) })
 $('cHideKnow').addEventListener('change', (e) => { cfgExtra.hideKnowBtns = e.target.checked; applyColors(); window.moyu.patchConfig('hideKnowBtns', cfgExtra.hideKnowBtns) })

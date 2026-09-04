@@ -37,6 +37,7 @@ const DEFAULT_CONFIG = {
   transColor: '#d7dce2', // 释义颜色
   transSize: 15, // 释义字号
   transWeight: 400, // 释义字重
+  transLines: 2, // 释义最多显示行数（超出省略号截断）
   hideHint: false, // 隐藏底部按键说明行
   hideKnowBtns: false, // 隐藏认识/不认识按钮（热键仍可用）
   wheelSwitch: true, // 滚轮切词开关
@@ -214,7 +215,48 @@ function getActiveBook() {
   if (!entry) return null
   const words = entry.words.filter((w) => !state.mastered[w.name])
   if (!words.length) return { id: entry.id, name: entry.name, words, allMastered: true }
-  return { id: entry.id, name: entry.name, words }
+  const st = (state.books[entry.id] = state.books[entry.id] || { idx: 0, known: {}, wrong: {} })
+  st.wrong = st.wrong || {}
+  const book = { id: entry.id, name: entry.name, words }
+  ensureOrdered(book, st)
+  return book
+}
+
+// ---------- 错词优先重现 ----------
+// 词序只在内存中维护：换书/换章/词集变化（熟记增减）时重建，错过的词按错误次数排最前；
+// 标记"不认识"时把该词插到当前位置后第 2 位，翻 1~2 个词就能再见到它（见 float:markWrong）
+let orderCache = { key: null, sig: '', list: [] }
+function orderSig(words) {
+  const first = words.length ? words[0].name : ''
+  const last = words.length ? words[words.length - 1].name : ''
+  return `${words.length}#${first}#${last}`
+}
+function ensureOrdered(book, st) {
+  const sig = orderSig(book.words)
+  if (orderCache.key !== book.id || orderCache.sig !== sig) {
+    const sameBook = orderCache.key === book.id
+    // 同一本书词集变化（如熟记删词）触发重排时，记住"原定下一个词"，重排后仍从它继续展示
+    const anchor = sameBook && orderCache.list.length
+      ? orderCache.list[Math.min((st.idx || 0) + 1, orderCache.list.length - 1)]
+      : null
+    const wrong = st.wrong || {}
+    orderCache = {
+      key: book.id,
+      sig,
+      list: book.words
+        .map((w, i) => ({ w, i, c: wrong[w.name] || 0 }))
+        .sort((a, b) => (b.c - a.c) || (a.i - b.i))
+        .map((x) => x.w),
+    }
+    if (anchor) {
+      const p = orderCache.list.findIndex((w) => w.name === anchor.name)
+      if (p >= 0) st.idx = p
+    }
+    const wrongCount = book.words.filter((w) => wrong[w.name]).length
+    log('词序重排: 错词', wrongCount, '个优先 / 共', book.words.length, '词')
+  }
+  book.words = orderCache.list
+  st.idx = Math.max(0, Math.min(st.idx || 0, book.words.length - 1))
 }
 
 // ---------- 悬浮窗数据 IPC ----------
@@ -251,6 +293,7 @@ ipcMain.handle('float:getData', () => {
     transColor: config.transColor,
     transSize: config.transSize,
     transWeight: config.transWeight,
+    transLines: config.transLines,
     hideHint: config.hideHint,
     hideKnowBtns: config.hideKnowBtns,
     wheelSwitch: config.wheelSwitch,
@@ -288,9 +331,18 @@ ipcMain.handle('float:markWrong', () => {
   const { words } = active
   const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {}, wrong: {} })
   st.wrong = st.wrong || {}
-  const name = words[st.idx].name
+  const word = words[st.idx]
+  const name = word.name
   st.wrong[name] = (st.wrong[name] || 0) + 1
   delete st.known[name] // 修正：之前点过"认识"的话改正过来
+  // 错词优先重现：把该词挪到当前位置后第 2 位，翻 1~2 个词就会再次出现
+  const p = words.findIndex((w) => w.name === name)
+  if (p >= 0) {
+    words.splice(p, 1)
+    const q = Math.min(st.idx + 2, words.length)
+    words.splice(q, 0, word)
+    log('错词重现:', name, '→ 第', q + 1, '位（共', words.length, '词）')
+  }
   saveState()
   return { ok: true, knownCount: Object.keys(st.known).length, wrongCount: Object.keys(st.wrong).length }
 })
@@ -339,7 +391,7 @@ ipcMain.handle('float:hover', (e, { inside } = {}) => {
   return { ok: true }
 })
 ipcMain.handle('float:patchConfig', (e, { key, value } = {}) => {
-  const allowed = ['idleOpacity', 'opacity', 'textIdleOpacity', 'textHoverOpacity', 'textGlow', 'wordColor', 'subColor', 'transColor', 'transSize', 'transWeight', 'hideHint', 'hideKnowBtns', 'wheelSwitch', 'bgColor', 'wordFont', 'wordFontWeight']
+  const allowed = ['idleOpacity', 'opacity', 'textIdleOpacity', 'textHoverOpacity', 'textGlow', 'wordColor', 'subColor', 'transColor', 'transSize', 'transWeight', 'transLines', 'hideHint', 'hideKnowBtns', 'wheelSwitch', 'bgColor', 'wordFont', 'wordFontWeight']
   if (!allowed.includes(key)) return { ok: false }
   config[key] = value
   saveConfig()
