@@ -237,22 +237,31 @@ function renderCounter() {
 }
 
 async function refresh(force = false) {
-  const data = await window.moyu.getData()
-  if (!force && cur && !cur.empty && !data.empty &&
-      cur.bookId === data.bookId && cur.idx === data.idx && cur.total === data.total && cur.knownCount === data.knownCount) {
-    cur = data // 词书和进度都没变，不重绘（避免打断翻释义状态）
-    return
+  if (!force && document.hidden) return // 隐藏（老板键/最小化）期间跳过对账，恢复时 visibilitychange 补一次
+  try {
+    const data = await window.moyu.getData()
+    if (!force && cur && !cur.empty && !data.empty &&
+        cur.bookId === data.bookId && cur.idx === data.idx && cur.total === data.total && cur.knownCount === data.knownCount) {
+      cur = data // 词书和进度都没变，不重绘（避免打断翻释义状态）
+      return
+    }
+    renderWord(data)
+  } catch (err) {
+    // 主进程异常也不能让轮询断掉、界面冻结
+    console.error('[float] refresh 失败:', err)
   }
-  renderWord(data)
 }
 
 async function next(dir) {
   if (animating || !cur || cur.empty) return
-  const r = await window.moyu.next(dir)
-  if (r && r.ok) {
-    Object.assign(cur, { idx: r.idx, total: r.total, knownCount: r.knownCount, wrongCount: r.wrongCount, word: r.word })
-    renderState()
-  }
+  try {
+    const r = await window.moyu.next(dir)
+    if (r && r.ok) {
+      Object.assign(cur, { idx: r.idx, total: r.total, knownCount: r.knownCount, wrongCount: r.wrongCount, word: r.word })
+      renderState()
+      setupAuto(cur.autoAdvanceSeconds) // 手动切词后重置自动切词节奏，避免刚切又立刻被自动切走
+    }
+  } catch (err) { console.error('[float] next 失败:', err) }
 }
 
 async function doMark(known) {
@@ -297,7 +306,7 @@ async function doMark(known) {
     console.error('[float] doMark 失败:', err)
     animating = false
     showMeaning()
-    setupAuto(cur.autoAdvanceSeconds)
+    if (cur && !cur.empty) setupAuto(cur.autoAdvanceSeconds)
   }
 }
 
@@ -328,7 +337,7 @@ async function doMaster() {
     console.error('[float] doMaster 失败:', err)
     animating = false
     showMeaning()
-    setupAuto(cur.autoAdvanceSeconds)
+    if (cur && !cur.empty) setupAuto(cur.autoAdvanceSeconds)
   }
 }
 
@@ -532,6 +541,8 @@ function setupAuto(seconds) {
 refresh().then(() => { if (cur && !cur.empty) setupAuto(cur.autoAdvanceSeconds) })
 // 兜底轮询：主窗口词库/章节变化由主进程推送，这里定期对账防止启动竞态漏掉首次同步
 setInterval(() => refresh(), 5000)
+// 老板键隐藏期间跳过对账；恢复显示时立即补一次（含词书/进度可能的变化）
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(true) })
 </script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 'use strict'
 // 摸鱼背词 Lite — qwerty-learner 离线桌面壳
 // 功能：本地静态服务 + 学习主窗口 + 透明摸鱼悬浮窗 + 老板键 + 托盘 + 自定义词书导入
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, dialog, nativeImage, screen } = require('electron')
+const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, dialog, nativeImage, screen, session } = require('electron')
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
@@ -58,9 +58,11 @@ let serverPort = 0
 let mouseOutTimer = null
 let floatMini = false
 let floatClickThrough = false
+let growBoundsTimer = null
 function floatEvent(name, data) { if (floatWin) floatWin.webContents.send('float-event', name, data) }
 function rememberFloatBounds() {
   if (!floatWin) return
+  if (floatMini) return // 迷你尺寸不许污染 floatBounds，否则退出迷你/重启都无法恢复原尺寸
   const b = floatWin.getBounds()
   config.floatBounds = { x: b.x, y: b.y, w: b.width, h: b.height }
   saveConfig()
@@ -68,14 +70,21 @@ function rememberFloatBounds() {
 
 function log(...args) {
   try {
-    fs.appendFileSync(path.join(app.getPath('userData'), 'moyu-lite.log'), `[${new Date().toISOString()}] ${args.join(' ')}\n`)
+    const f = path.join(app.getPath('userData'), 'moyu-lite.log')
+    try { if (fs.statSync(f).size > 1048576) fs.renameSync(f, f + '.old') } catch {} // 超过 1MB 轮转，防无限增长
+    fs.appendFileSync(f, `[${new Date().toISOString()}] ${args.join(' ')}\n`)
   } catch {}
 }
 function loadJson(file, fallback) {
   try { return { ...fallback, ...JSON.parse(fs.readFileSync(file, 'utf8')) } } catch { return fallback }
 }
 function saveJson(file, data) {
-  try { fs.writeFileSync(file, JSON.stringify(data, null, 2)) } catch (e) { log('saveJson失败', file, e.message) }
+  // 原子写：先写临时文件再改名，避免崩溃/断电留下截断的 JSON（进度清零事故）
+  try {
+    const tmp = file + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2))
+    fs.renameSync(tmp, file)
+  } catch (e) { log('saveJson失败', file, e.message) }
 }
 function saveConfig() { saveJson(CONFIG_FILE(), config) }
 function saveState() { saveJson(STATE_FILE(), state) }
@@ -93,7 +102,13 @@ const CURATED_BUILTIN = [
 function listCustomBooks() {
   try { return JSON.parse(fs.readFileSync(path.join(CUSTOM_DIR, 'index.json'), 'utf8')) } catch { return [] }
 }
+// listBooks/readBookEntries 会被 5s 对账轮询和每次切词/标记反复调用：
+// 按 mtime 缓存，避免固定词书模式下每 5s 全量重读重解析整本词书（同步 IO 阻塞主进程）
+let booksCache = null // { idxMtime, list }
 function listBooks() {
+  let idxMtime = 0
+  try { idxMtime = fs.statSync(path.join(CUSTOM_DIR, 'index.json')).mtimeMs } catch {}
+  if (booksCache && booksCache.idxMtime === idxMtime) return booksCache.list
   const custom = listCustomBooks()
   const builtin = CURATED_BUILTIN.filter((b) => fs.existsSync(path.join(WEB_ROOT, 'dicts', b.file))).map((b) => ({
     id: 'builtin:' + b.file,
@@ -101,13 +116,22 @@ function listBooks() {
     url: '/dicts/' + b.file,
     length: 0,
   }))
-  return [...custom, ...builtin]
+  booksCache = { idxMtime, list: [...custom, ...builtin] }
+  return booksCache.list
 }
+const bookCache = new Map() // bookId -> { mtimeMs, size, book, words }
 function readBookEntries(bookId) {
   const book = listBooks().find((b) => b.id === bookId)
   if (!book) return null
   const file = path.join(WEB_ROOT, book.url.replace(/^\//, '').replace(/\//g, path.sep))
-  try { return { book, words: JSON.parse(fs.readFileSync(file, 'utf8')) } } catch (e) { log('词书读取失败', bookId, e.message); return null }
+  try {
+    const st = fs.statSync(file)
+    const hit = bookCache.get(bookId)
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return { book: hit.book, words: hit.words }
+    const words = JSON.parse(fs.readFileSync(file, 'utf8'))
+    bookCache.set(bookId, { mtimeMs: st.mtimeMs, size: st.size, book, words })
+    return { book, words }
+  } catch (e) { log('词书读取失败', bookId, e.message); return null }
 }
 function rebuildCustomIndex() {
   fs.mkdirSync(CUSTOM_DIR, { recursive: true })
@@ -173,18 +197,21 @@ function loadWordsByUrl(url) {
 }
 function applySyncBook(dictId, chapter) {
   const info = resolveDict(dictId)
-  if (!info) return
+  if (!info) return false
   const all = loadWordsByUrl(info.url)
-  if (!all || !all.length) return
+  if (!all || !all.length) return false
   const start = (chapter || 0) * CHAPTER_LENGTH
   const words = all.slice(start, start + CHAPTER_LENGTH)
-  if (!words.length) return
+  if (!words.length) return false
   syncedBook = { dictId, chapter: chapter || 0, name: info.name, words }
   log('同步词书:', dictId, '章节', chapter || 0, '共', words.length, '词')
   floatEvent('sync-book', {})
+  return true
 }
 async function pollMainSelection(force = false) {
   if (!mainWin) return
+  // 主窗口隐藏期间词库/章节不可能变化，跳过轮询让渲染进程安静节流；显示时会补一次强同步
+  if (!force && (!mainWin.isVisible() || mainWin.webContents.isLoading())) return
   try {
     const raw = await mainWin.webContents.executeJavaScript(
       `JSON.stringify({ d: localStorage.getItem('currentDict'), c: localStorage.getItem('currentChapter') })`, true)
@@ -195,9 +222,10 @@ async function pollMainSelection(force = false) {
     const rawC = parseLS(sel.c)
     const chapter = rawC == null || isNaN(Number(rawC)) ? 0 : Number(rawC)
     if (!force && dictId === syncInfo.dictId && chapter === syncInfo.chapter) return
+    const prev = syncInfo
     syncInfo = { dictId, chapter }
     if (config.bookId != null) return // 固定词书模式下不同步
-    applySyncBook(dictId, chapter)
+    if (!applySyncBook(dictId, chapter)) syncInfo = prev // 失败回滚，下一轮 2s 轮询重试（否则跟随模式永久冻结在旧书）
   } catch {}
 }
 
@@ -310,6 +338,15 @@ ipcMain.handle('float:next', (e, { dir = 1 } = {}) => {
   const { words } = active
   const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {}, wrong: {} })
   st.wrong = st.wrong || {}
+  // 错词优先重现：前进离开一个错词时，把它插到身后第 2 位，1~2 词内再次出现；
+  // 在"离开"时才动词序，主进程光标与渲染层停留显示的词全程一致（改标认识后自然不再重现）
+  const leaving = words[st.idx]
+  if (dir === 1 && st.wrong[leaving.name] && !st.known[leaving.name]) {
+    words.splice(st.idx, 1)
+    const q = Math.min(st.idx + 2, words.length)
+    words.splice(q, 0, leaving)
+    log('错词重现:', leaving.name, '→ 第', q + 1, '位（共', words.length, '词）')
+  }
   let tries = 0
   do { st.idx = (st.idx + dir + words.length) % words.length; tries++ } while (st.known[words[st.idx].name] && tries < words.length)
   saveState()
@@ -330,21 +367,13 @@ ipcMain.handle('float:markKnown', () => {
 ipcMain.handle('float:markWrong', () => {
   const active = getActiveBook()
   if (!active || !active.words.length) return { ok: false }
-  const { words } = active
   const st = (state.books[active.id] = state.books[active.id] || { idx: 0, known: {}, wrong: {} })
   st.wrong = st.wrong || {}
-  const word = words[st.idx]
-  const name = word.name
+  const name = active.words[st.idx].name
   st.wrong[name] = (st.wrong[name] || 0) + 1
   delete st.known[name] // 修正：之前点过"认识"的话改正过来
-  // 错词优先重现：把该词挪到当前位置后第 2 位，翻 1~2 个词就会再次出现
-  const p = words.findIndex((w) => w.name === name)
-  if (p >= 0) {
-    words.splice(p, 1)
-    const q = Math.min(st.idx + 2, words.length)
-    words.splice(q, 0, word)
-    log('错词重现:', name, '→ 第', q + 1, '位（共', words.length, '词）')
-  }
+  // ⚠️ 这里只记账、不重排：词序移动统一放到 float:next 离开该词时做，
+  // 否则插入会让主进程光标与渲染层停留显示的词错位（停留期间标记会打到别的词上）
   saveState()
   return { ok: true, knownCount: Object.keys(st.known).length, wrongCount: Object.keys(st.wrong).length }
 })
@@ -371,7 +400,8 @@ ipcMain.handle('float:growBy', (e, { dx = 0, dy = 0 } = {}) => {
     floatWin.setResizable(true)
     floatWin.setSize(w, h)
     floatWin.setResizable(false)
-    rememberFloatBounds()
+    clearTimeout(growBoundsTimer)
+    growBoundsTimer = setTimeout(rememberFloatBounds, 500) // 拖拽缩放每帧触发，防抖后统一落盘
   }
   return { ok: true }
 })
@@ -453,16 +483,31 @@ function startServer() {
         rel = rel.replace(/\.\./g, '') // 防目录穿越
         const file = path.join(WEB_ROOT, rel.replace(/\//g, path.sep))
         if (!fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end('not found'); return }
-        const noCache = file.startsWith(CUSTOM_DIR)
-        res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': noCache ? 'no-cache' : 'public, max-age=3600' })
-        fs.createReadStream(file).pipe(res)
+        const ext = path.extname(file).toLowerCase()
+        // 固定端口后缓存按 origin 稳定复用（此前随机端口导致每轮启动产生一批永远命不中的死缓存）：
+        // html 必须校验（否则更新后命中旧 index 引用已替换的哈希资产）；Vite 哈希资产可放心一年
+        let cache = 'public, max-age=3600'
+        if (file.startsWith(CUSTOM_DIR) || ext === '.html') cache = 'no-cache'
+        else if (urlPath.startsWith('/assets/')) cache = 'public, max-age=31536000, immutable'
+        res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': cache })
+        fs.createReadStream(file).on('error', () => { try { res.destroy() } catch {} }).pipe(res)
       } catch (e) { res.writeHead(500); res.end('error') }
     })
-    server.listen(0, '127.0.0.1', () => {
-      serverPort = server.address().port
-      log('静态服务已启动', serverPort)
-      resolve()
-    })
+    // 读流失败若无监听会以未捕获异常击穿主进程
+    const bind = (port) => {
+      const onErr = (e) => {
+        if (port !== 0) { log('固定端口被占，回退随机端口', port, e.code); bind(0) }
+        else { log('静态服务监听失败', e.code); resolve() }
+      }
+      server.once('error', onErr)
+      server.listen(port, '127.0.0.1', () => {
+        server.removeListener('error', onErr)
+        serverPort = server.address().port
+        log('静态服务已启动', serverPort)
+        resolve()
+      })
+    }
+    bind(41777)
   })
 }
 
@@ -470,12 +515,13 @@ function startServer() {
 function createMainWindow() {
   mainWin = new BrowserWindow({
     width: 1280, height: 820, show: false, autoHideMenuBar: true, title: '摸鱼背词 Lite',
-    webPreferences: { preload: path.join(__dirname, 'host-preload.js'), contextIsolation: true },
+    webPreferences: { preload: path.join(__dirname, 'host-preload.js'), contextIsolation: true, spellcheck: false },
   })
   mainWin.loadURL(`http://127.0.0.1:${serverPort}/`)
   mainWin.webContents.on('did-fail-load', (e, code, desc, url) => log('主窗口加载失败', code, desc, url))
   mainWin.webContents.on('did-finish-load', () => { log('主窗口加载完成'); injectFloatToggle() })
   mainWin.webContents.on('console-message', (e, lv, msg) => { if (lv >= 2) log('[main渲染]', msg) })
+  mainWin.on('show', () => { pollMainSelection(true) }) // 从隐藏恢复时立即补一次词库/章节同步
   const forceShowTimer = setTimeout(() => { if (mainWin && !mainWin.isVisible()) { log('主窗口5秒未就绪，强制显示'); mainWin.show() } }, 5000)
   mainWin.once('ready-to-show', () => { clearTimeout(forceShowTimer); log('主窗口 ready-to-show'); mainWin.show() })
   mainWin.on('closed', () => { mainWin = null })
@@ -484,12 +530,18 @@ function createFloatWindow() {
   const wa = screen.getPrimaryDisplay().workArea
   const fb = config.floatBounds || {}
   const dw = fb.w || 480, dh = fb.h || 170
-  const pos = fb.x != null ? { x: fb.x, y: fb.y } : { x: wa.x + wa.width - dw - 48, y: wa.y + wa.height - dh - 60 }
+  let pos = fb.x != null ? { x: fb.x, y: fb.y } : { x: wa.x + wa.width - dw - 48, y: wa.y + wa.height - dh - 60 }
+  // 恢复的位置必须至少有 40x40 落在某块屏的工作区内，否则（如拔掉副屏后）窗口会隐形失踪
+  const visible = screen.getAllDisplays().some((d) => {
+    const a = d.workArea
+    return pos.x + dw > a.x + 40 && pos.x < a.x + a.width - 40 && pos.y + dh > a.y + 40 && pos.y < a.y + a.height - 40
+  })
+  if (!visible) pos = { x: wa.x + wa.width - dw - 48, y: wa.y + wa.height - dh - 60 }
   floatWin = new BrowserWindow({
     width: dw, height: dh, show: false, frame: false, transparent: true, alwaysOnTop: true,
     skipTaskbar: true, resizable: false, hasShadow: false,
     x: pos.x, y: pos.y,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: false },
   })
   floatWin.setAlwaysOnTop(true, 'screen-saver')
   floatWin.loadFile(path.join(__dirname, 'float.html'))
@@ -499,7 +551,7 @@ function createFloatWindow() {
     boundsTimer = setTimeout(rememberFloatBounds, 500)
   })
   floatWin.webContents.on('did-fail-load', (e, code, desc, url) => log('悬浮窗加载失败', code, desc, url))
-  floatWin.webContents.on('console-message', (e, lv, msg) => log('[float渲染]', msg))
+  floatWin.webContents.on('console-message', (e, lv, msg) => { if (lv >= 2) log('[float渲染]', msg) })
   floatWin.once('ready-to-show', () => { log('悬浮窗 ready-to-show'); floatWin.show() })
   floatWin.on('closed', () => { floatWin = null; broadcastFloatState() })
 }
@@ -648,8 +700,18 @@ if (!gotLock) app.quit()
 app.on('second-instance', showMain)
 
 app.whenReady().then(async () => {
+  if (!gotLock) return // 单实例锁失败：app.quit() 进行中，不再初始化窗口/托盘/热键
   config = loadJson(CONFIG_FILE(), DEFAULT_CONFIG)
   state = loadJson(STATE_FILE(), { books: {} })
+  // 畸形 state（如 books:null）会让全部 float:* IPC reject、悬浮窗静默空白——启动时归一化
+  if (!state.books || typeof state.books !== 'object') state.books = {}
+  if (!state.mastered || typeof state.mastered !== 'object') state.mastered = {}
+  // ql 前端 index.html 会外拉 Google Analytics / fonts.googleapis：离线壳里纯浪费（流量+渲染堆+隐私）
+  try {
+    session.defaultSession.webRequest.onBeforeRequest(
+      { urls: ['https://www.googletagmanager.com/*', 'https://*.google-analytics.com/*', 'https://analytics.google.com/*', 'https://fonts.googleapis.com/*'] },
+      (d, cb) => cb({ cancel: true }))
+  } catch (e) { log('GA 拦截注册失败', e.message) }
   await startServer()
   createMainWindow()
   createFloatWindow()

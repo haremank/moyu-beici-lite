@@ -102,7 +102,8 @@ function parseJsonData(data) {
 
 function parseDictFile(filePath) {
   const ext = path.extname(filePath).toLowerCase()
-  const text = fs.readFileSync(filePath, 'utf-8')
+  // 记事本等工具常产出带 BOM 的文件：不剥掉会让 JSON.parse 直接失败、txt/csv 首词混入不可见字符
+  const text = fs.readFileSync(filePath, 'utf-8').replace(/^\uFEFF/, '')
   let entries
   if (ext === '.json') {
     let data
