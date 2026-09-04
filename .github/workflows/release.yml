@@ -25,8 +25,8 @@ jobs:
       - name: Build frontend (qwerty-learner)
         working-directory: qwerty-learner
         run: |
-          npm ci
-          npm run build
+          yarn install --frozen-lockfile
+          yarn build
 
       - name: Build installer (electron-builder win64 NSIS)
         working-directory: moyu-lite
