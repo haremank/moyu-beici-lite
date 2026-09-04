@@ -1,0 +1,60 @@
+{
+  "name": "moyu-lite",
+  "version": "1.0.0",
+  "description": "摸鱼背词Lite — 离线摸鱼背单词桌面应用（qwerty-learner 桌面壳：悬浮窗 + 老板键 + 自定义词书）",
+  "main": "main.js",
+  "license": "GPL-3.0",
+  "author": "haremank",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.haremank.moyubeici",
+    "productName": "摸鱼背词Lite",
+    "directories": {
+      "output": "release",
+      "buildResources": "buildres"
+    },
+    "files": [
+      "main.js",
+      "float.html",
+      "preload.js",
+      "host-preload.js",
+      "lib/**",
+      "tray.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../qwerty-learner/build",
+        "to": "web"
+      },
+      {
+        "from": "../qwerty-learner/src/resources/dictionary.ts",
+        "to": "dictionary.ts"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "buildres/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "MoyuBeiCi-Lite-${version}-win64-setup.exe",
+      "shortcutName": "摸鱼背词Lite",
+      "uninstallDisplayName": "摸鱼背词Lite ${version}"
+    }
+  }
+}

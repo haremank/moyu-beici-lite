@@ -1,0 +1,15 @@
+# Node / Electron
+node_modules/
+release/
+dist/
+build/
+*.log
+
+# 用户本地数据（不应入库）
+*.state.json
+config.local.json
+
+# 系统杂项
+.DS_Store
+Thumbs.db
+.claude/
