@@ -18,7 +18,7 @@
   }
   .card {
     position: relative;
-    height: 100vh; display: flex; flex-direction: column; justify-content: flex-start;
+    height: 100vh; display: flex; flex-direction: column; justify-content: center;
     background: transparent; border-radius: 10px; padding: 10px 16px;
     font-family: 'Consolas', 'Microsoft YaHei', monospace;
   }
@@ -46,15 +46,14 @@
   #gear { position: absolute; top: 6px; right: 10px; z-index: 5; cursor: pointer; color: var(--sub-color); font-size: 15px; padding: 0 4px; border-radius: 4px; opacity: 0; transition: opacity 0.25s ease; }
   body.hovered #gear { opacity: 1; }
   #gear:hover { color: var(--word-color); }
-  .word { font-size: 32px; font-weight: var(--word-weight, 800); font-family: var(--word-font, Consolas); color: var(--word-color); letter-spacing: 0.5px; line-height: 1.2; white-space: nowrap; margin-bottom: 6px;
+  .word { font-size: 32px; font-weight: var(--word-weight, 800); font-family: var(--word-font, Consolas); color: var(--word-color); letter-spacing: 0.5px; line-height: 1.2; white-space: nowrap;
           text-shadow: var(--word-glow, none); }
   .word span { display: inline-block; }
   .word.shatter span { animation: shatter 0.65s ease-in forwards; }
   @keyframes shatter {
     to { transform: translate(var(--tx), var(--ty)) rotate(var(--rot)); opacity: 0; }
   }
-  /* 释义沉底：margin-top:auto 吃掉全部富余空间，窗口拉高时释义远离单词、钉住底边 */
-  .trans { margin-top: auto; font-size: var(--trans-size, 15px); font-weight: var(--trans-weight, 400); color: var(--trans-color, var(--sub-color)); line-height: 1.35;
+  .trans { margin-top: var(--trans-gap, 6px); font-size: var(--trans-size, 15px); font-weight: var(--trans-weight, 400); color: var(--trans-color, var(--sub-color)); line-height: 1.35;
            display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--trans-lines, 2);
            overflow: hidden; white-space: normal; word-break: break-word; max-height: calc(var(--trans-lines, 2) * 1.4em); }
   .trans.hidden { font-style: italic; }
@@ -129,6 +128,7 @@
     <div class="row"><span>单词字体/字重</span><select id="selFont"></select><select id="selWeight"></select><span style="width:auto">发光</span><input type="checkbox" id="cGlow"></div>
     <div class="row"><span>释义大小/字重</span><input type="range" id="sTransSize" min="10" max="26" step="1"><b id="vTransSize"></b><input type="range" id="sTransWeight" min="300" max="900" step="100"><b id="vTransWeight"></b></div>
     <div class="row"><span>释义行数</span><select id="selTransLines"><option value="1">1 行（单行省略）</option><option value="2">2 行</option><option value="3">3 行</option></select></div>
+    <div class="row"><span>释义与单词间距</span><input type="range" id="sTransGap" min="0" max="120" step="1"><b id="vTransGap"></b></div>
     <div class="sec">颜色</div>
     <div class="row colorrow"><span>单词</span><input type="color" id="cWord"><span>释义</span><input type="color" id="cTrans"><span>辅助</span><input type="color" id="cSub"><span>背景</span><input type="color" id="cBg"></div>
     <div class="sec">按键开关</div>
@@ -147,7 +147,7 @@ let prePanelH = null  // 打开设置面板前的窗口高度
 
 const $ = (id) => document.getElementById(id)
 const HINT_DEFAULT = '左键 翻释义 · 右键/滚轮 切词 · Alt+2 认识 / Alt+1 不认识 · 右上角⚙ 设置'
-const cfgExtra = { idleOpacity: 0.15, hoverOpacity: 0.95, textIdleOpacity: 0, textHoverOpacity: 1, textGlow: true, wordColor: '#7ae6ac', subColor: '#aeb7c2', transColor: '#d7dce2', transSize: 15, transWeight: 400, transLines: 2, hideHint: false, hideKnowBtns: false, wheelSwitch: true, bgColor: '#1e2228', wordFont: 'Consolas', wordFontWeight: 800 }
+const cfgExtra = { idleOpacity: 0.15, hoverOpacity: 0.95, textIdleOpacity: 0, textHoverOpacity: 1, textGlow: true, wordColor: '#7ae6ac', subColor: '#aeb7c2', transColor: '#d7dce2', transSize: 15, transWeight: 400, transLines: 2, transGap: 6, hideHint: false, hideKnowBtns: false, wheelSwitch: true, bgColor: '#1e2228', wordFont: 'Consolas', wordFontWeight: 800 }
 
 
 function hexToRgba(hex, a) {
@@ -176,6 +176,7 @@ function applyColors() {
   r.setProperty('--trans-size', cfgExtra.transSize + 'px')
   r.setProperty('--trans-weight', String(cfgExtra.transWeight))
   r.setProperty('--trans-lines', String(Math.min(3, Math.max(1, Number(cfgExtra.transLines) || 2))))
+  r.setProperty('--trans-gap', Math.max(0, Number(cfgExtra.transGap) || 0) + 'px')
   r.setProperty('--hint-display', cfgExtra.hideHint ? 'none' : 'block')
   r.setProperty('--btnrow-display', cfgExtra.hideKnowBtns ? 'none' : 'flex')
 }
@@ -202,6 +203,7 @@ function renderWord(data) {
   cfgExtra.transSize = data.transSize
   cfgExtra.transWeight = data.transWeight
   cfgExtra.transLines = data.transLines
+  cfgExtra.transGap = data.transGap
   cfgExtra.hideHint = data.hideHint
   cfgExtra.hideKnowBtns = data.hideKnowBtns
   cfgExtra.wheelSwitch = data.wheelSwitch
@@ -414,6 +416,8 @@ function syncPanel() {
   $('cHideHint').checked = !!cfgExtra.hideHint
   $('cHideKnow').checked = !!cfgExtra.hideKnowBtns
   $('cWheel').checked = !!cfgExtra.wheelSwitch
+  $('sTransGap').value = Math.max(0, Number(cfgExtra.transGap) || 0)
+  $('vTransGap').textContent = $('sTransGap').value + 'px'
   $('cTrans').value = cfgExtra.transColor
   $('cWord').value = cfgExtra.wordColor
   $('cSub').value = cfgExtra.subColor
@@ -424,14 +428,14 @@ function togglePanel(force) {
   if (opening && !panelOpen) prePanelH = window.innerHeight // 记住打开前高度，关闭时恢复（不再压回 150）
   panelOpen = opening
   panel.classList.toggle('hidden2', !panelOpen)
-  window.moyu.expand(panelOpen ? 500 : (prePanelH || 150))
+  window.moyu.expand(panelOpen ? 540 : (prePanelH || 150))
   if (panelOpen) syncPanel()
 }
 $('gear').addEventListener('mousedown', (e) => e.stopPropagation())
 $('gear').addEventListener('mouseup', (e) => e.stopPropagation())
 $('gear').addEventListener('click', (e) => { e.stopPropagation(); togglePanel() })
 $('done').addEventListener('click', (e) => { e.stopPropagation(); togglePanel(false) })
-const APPEARANCE_DEFAULTS = { idleOpacity: 0.15, hoverOpacity: 0.95, textIdleOpacity: 0, textHoverOpacity: 1, textGlow: true, wordColor: '#7ae6ac', subColor: '#aeb7c2', transColor: '#d7dce2', transSize: 15, transWeight: 400, transLines: 2, hideHint: false, hideKnowBtns: false, wheelSwitch: true, bgColor: '#1e2228', wordFont: 'Consolas', wordFontWeight: 800 }
+const APPEARANCE_DEFAULTS = { idleOpacity: 0.15, hoverOpacity: 0.95, textIdleOpacity: 0, textHoverOpacity: 1, textGlow: true, wordColor: '#7ae6ac', subColor: '#aeb7c2', transColor: '#d7dce2', transSize: 15, transWeight: 400, transLines: 2, transGap: 6, hideHint: false, hideKnowBtns: false, wheelSwitch: true, bgColor: '#1e2228', wordFont: 'Consolas', wordFontWeight: 800 }
 $('reset').addEventListener('click', (e) => {
   e.stopPropagation()
   Object.assign(cfgExtra, APPEARANCE_DEFAULTS)
@@ -449,6 +453,7 @@ $('cTrans').addEventListener('input', (e) => { cfgExtra.transColor = e.target.va
 $('cHideHint').addEventListener('change', (e) => { cfgExtra.hideHint = e.target.checked; applyColors(); window.moyu.patchConfig('hideHint', cfgExtra.hideHint) })
 $('cHideKnow').addEventListener('change', (e) => { cfgExtra.hideKnowBtns = e.target.checked; applyColors(); window.moyu.patchConfig('hideKnowBtns', cfgExtra.hideKnowBtns) })
 $('cWheel').addEventListener('change', (e) => { cfgExtra.wheelSwitch = e.target.checked; window.moyu.patchConfig('wheelSwitch', cfgExtra.wheelSwitch) })
+$('sTransGap').addEventListener('input', (e) => { cfgExtra.transGap = Number(e.target.value); $('vTransGap').textContent = e.target.value + 'px'; applyColors(); window.moyu.patchConfig('transGap', cfgExtra.transGap) })
 panel.addEventListener('mousedown', (e) => {
   e.stopPropagation()
   // 面板打开时也能拖动窗口：从面板空白处/分组标题按住即可（滑条/下拉/按钮上按下仍是正常操作）

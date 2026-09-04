@@ -38,6 +38,7 @@ const DEFAULT_CONFIG = {
   transSize: 15, // 释义字号
   transWeight: 400, // 释义字重
   transLines: 2, // 释义最多显示行数（超出省略号截断）
+  transGap: 6, // 释义与上方单词的间距（px）
   hideHint: false, // 隐藏底部按键说明行
   hideKnowBtns: false, // 隐藏认识/不认识按钮（热键仍可用）
   wheelSwitch: true, // 滚轮切词开关
@@ -294,6 +295,7 @@ ipcMain.handle('float:getData', () => {
     transSize: config.transSize,
     transWeight: config.transWeight,
     transLines: config.transLines,
+    transGap: config.transGap,
     hideHint: config.hideHint,
     hideKnowBtns: config.hideKnowBtns,
     wheelSwitch: config.wheelSwitch,
@@ -391,7 +393,7 @@ ipcMain.handle('float:hover', (e, { inside } = {}) => {
   return { ok: true }
 })
 ipcMain.handle('float:patchConfig', (e, { key, value } = {}) => {
-  const allowed = ['idleOpacity', 'opacity', 'textIdleOpacity', 'textHoverOpacity', 'textGlow', 'wordColor', 'subColor', 'transColor', 'transSize', 'transWeight', 'transLines', 'hideHint', 'hideKnowBtns', 'wheelSwitch', 'bgColor', 'wordFont', 'wordFontWeight']
+  const allowed = ['idleOpacity', 'opacity', 'textIdleOpacity', 'textHoverOpacity', 'textGlow', 'wordColor', 'subColor', 'transColor', 'transSize', 'transWeight', 'transLines', 'transGap', 'hideHint', 'hideKnowBtns', 'wheelSwitch', 'bgColor', 'wordFont', 'wordFontWeight']
   if (!allowed.includes(key)) return { ok: false }
   config[key] = value
   saveConfig()
