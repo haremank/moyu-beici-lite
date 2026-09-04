@@ -399,7 +399,7 @@ ipcMain.handle('float:patchConfig', (e, { key, value } = {}) => {
 })
 ipcMain.handle('float:expand', (e, { h } = {}) => {
   if (!floatWin) return { ok: false }
-  const target = Math.max(56, Math.min(520, Number(h) || 150))
+  const target = Math.max(56, Math.min(700, Number(h) || 150)) // 上限 700 与 grip 缩放一致，恢复用户拖大的高度不被钳掉
   const b = floatWin.getBounds()
   floatWin.setResizable(true)
   floatWin.setSize(b.width, target)

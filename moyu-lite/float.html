@@ -18,7 +18,7 @@
   }
   .card {
     position: relative;
-    height: 100vh; display: flex; flex-direction: column; justify-content: center;
+    height: 100vh; display: flex; flex-direction: column; justify-content: flex-start;
     background: transparent; border-radius: 10px; padding: 10px 16px;
     font-family: 'Consolas', 'Microsoft YaHei', monospace;
   }
@@ -46,14 +46,15 @@
   #gear { position: absolute; top: 6px; right: 10px; z-index: 5; cursor: pointer; color: var(--sub-color); font-size: 15px; padding: 0 4px; border-radius: 4px; opacity: 0; transition: opacity 0.25s ease; }
   body.hovered #gear { opacity: 1; }
   #gear:hover { color: var(--word-color); }
-  .word { font-size: 32px; font-weight: var(--word-weight, 800); font-family: var(--word-font, Consolas); color: var(--word-color); letter-spacing: 0.5px; line-height: 1.2; white-space: nowrap;
+  .word { font-size: 32px; font-weight: var(--word-weight, 800); font-family: var(--word-font, Consolas); color: var(--word-color); letter-spacing: 0.5px; line-height: 1.2; white-space: nowrap; margin-bottom: 6px;
           text-shadow: var(--word-glow, none); }
   .word span { display: inline-block; }
   .word.shatter span { animation: shatter 0.65s ease-in forwards; }
   @keyframes shatter {
     to { transform: translate(var(--tx), var(--ty)) rotate(var(--rot)); opacity: 0; }
   }
-  .trans { margin-top: 6px; font-size: var(--trans-size, 15px); font-weight: var(--trans-weight, 400); color: var(--trans-color, var(--sub-color)); line-height: 1.35;
+  /* 释义沉底：margin-top:auto 吃掉全部富余空间，窗口拉高时释义远离单词、钉住底边 */
+  .trans { margin-top: auto; font-size: var(--trans-size, 15px); font-weight: var(--trans-weight, 400); color: var(--trans-color, var(--sub-color)); line-height: 1.35;
            display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--trans-lines, 2);
            overflow: hidden; white-space: normal; word-break: break-word; max-height: calc(var(--trans-lines, 2) * 1.4em); }
   .trans.hidden { font-style: italic; }
@@ -139,9 +140,10 @@
 'use strict'
 let cur = null        // getData 结果
 let flipped = false
-let press = null      // {sx, sy, moved, longTimer, longFired}
+let press = null      // {sx, sy, moved, longTimer, longFired, fromPanel}
 let animating = false
 let panelOpen = false
+let prePanelH = null  // 打开设置面板前的窗口高度
 
 const $ = (id) => document.getElementById(id)
 const HINT_DEFAULT = '左键 翻释义 · 右键/滚轮 切词 · Alt+2 认识 / Alt+1 不认识 · 右上角⚙ 设置'
@@ -328,21 +330,28 @@ async function doMaster() {
   }
 }
 
-// 鼠标交互：左键点击=翻释义，按住移动=拖窗口，长按3秒=已会，右键=切词
+// 鼠标交互：左键点击=翻释义，按住移动=拖窗口，长按3秒=已会，右键=切词；设置面板空白处也可拖动
 const card = $('card')
+function startPress(e, { fromPanel = false } = {}) {
+  press = { sx: e.screenX, sy: e.screenY, lastX: e.screenX, lastY: e.screenY, moved: false, longFired: false, fromPanel,
+    longTimer: fromPanel ? null : setTimeout(() => { press.longFired = true; doMark(true) }, 3000) }
+}
+function capturePointer(el, e) { try { el.setPointerCapture(e.pointerId) } catch {} }
 card.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || animating || panelOpen) return
-  press = { sx: e.screenX, sy: e.screenY, lastX: e.screenX, lastY: e.screenY, moved: false, longFired: false,
-    longTimer: setTimeout(() => { press.longFired = true; doMark(true) }, 3000) }
+  startPress(e)
+  capturePointer(card, e) // 指针捕获：拖出窗外松手也能收到 mouseup，防窗口"粘"在鼠标上
 })
 window.addEventListener('mousemove', (e) => {
   if (resizing) {
+    if (!(e.buttons & 1)) { resizing = null; return } // 在窗外松开的自愈
     const dx = e.screenX - resizing.x, dy = e.screenY - resizing.y
     resizing.x = e.screenX; resizing.y = e.screenY
     window.moyu.growBy(dx, dy)
     return
   }
   if (!press) return
+  if (!(e.buttons & 1)) { press = null; return } // 在窗外松开的自愈：不再追着鼠标跑
   const dx = e.screenX - press.lastX, dy = e.screenY - press.lastY
   if (!press.moved && Math.hypot(e.screenX - press.sx, e.screenY - press.sy) > 10) {
     press.moved = true
@@ -357,7 +366,7 @@ window.addEventListener('mouseup', (e) => {
   if (resizing) { resizing = null; return }
   if (!press) return
   clearTimeout(press.longTimer)
-  const wasClick = !press.moved && !press.longFired
+  const wasClick = !press.moved && !press.longFired && !press.fromPanel
   const btn = e.button
   press = null
   if (wasClick && btn === 0 && cur && !cur.empty) {
@@ -411,9 +420,11 @@ function syncPanel() {
   $('cBg').value = cfgExtra.bgColor
 }
 function togglePanel(force) {
-  panelOpen = force != null ? force : !panelOpen
+  const opening = force != null ? force : !panelOpen
+  if (opening && !panelOpen) prePanelH = window.innerHeight // 记住打开前高度，关闭时恢复（不再压回 150）
+  panelOpen = opening
   panel.classList.toggle('hidden2', !panelOpen)
-  window.moyu.expand(panelOpen ? 500 : 150)
+  window.moyu.expand(panelOpen ? 500 : (prePanelH || 150))
   if (panelOpen) syncPanel()
 }
 $('gear').addEventListener('mousedown', (e) => e.stopPropagation())
@@ -438,7 +449,14 @@ $('cTrans').addEventListener('input', (e) => { cfgExtra.transColor = e.target.va
 $('cHideHint').addEventListener('change', (e) => { cfgExtra.hideHint = e.target.checked; applyColors(); window.moyu.patchConfig('hideHint', cfgExtra.hideHint) })
 $('cHideKnow').addEventListener('change', (e) => { cfgExtra.hideKnowBtns = e.target.checked; applyColors(); window.moyu.patchConfig('hideKnowBtns', cfgExtra.hideKnowBtns) })
 $('cWheel').addEventListener('change', (e) => { cfgExtra.wheelSwitch = e.target.checked; window.moyu.patchConfig('wheelSwitch', cfgExtra.wheelSwitch) })
-panel.addEventListener('mousedown', (e) => e.stopPropagation())
+panel.addEventListener('mousedown', (e) => {
+  e.stopPropagation()
+  // 面板打开时也能拖动窗口：从面板空白处/分组标题按住即可（滑条/下拉/按钮上按下仍是正常操作）
+  if (e.button === 0 && !animating && !e.target.closest('input, select, button')) {
+    startPress(e, { fromPanel: true })
+    capturePointer(panel, e)
+  }
+})
 panel.addEventListener('mouseup', (e) => e.stopPropagation())
 panel.addEventListener('contextmenu', (e) => e.stopPropagation())
 panel.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true })
@@ -472,7 +490,7 @@ $('cBg').addEventListener('input', (e) => { cfgExtra.bgColor = e.target.value; a
 
 // 拖动右下角手柄调整悬浮窗大小
 let resizing = null
-$('grip').addEventListener('mousedown', (e) => { e.stopPropagation(); resizing = { x: e.screenX, y: e.screenY } })
+$('grip').addEventListener('mousedown', (e) => { e.stopPropagation(); resizing = { x: e.screenX, y: e.screenY }; capturePointer($('grip'), e) })
 $('grip').addEventListener('mouseup', (e) => e.stopPropagation())
 
 // 认识 / 不认识 / 熟记按钮（长按等效"认识"）
