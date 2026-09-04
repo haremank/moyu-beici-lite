@@ -244,7 +244,7 @@ async function doMark(known) {
     const r = known ? await window.moyu.markKnown() : await window.moyu.markWrong()
     if (r && r.ok) { cur.knownCount = r.knownCount; cur.wrongCount = r.wrongCount }
     if (known) {
-      // 碎裂动画：把单词拆成字符，各自随机飞散
+      // 碎裂动画 → 拼回原词 → 显示释义；停留在当前词，不自动跳转
       const w = $('word')
       const text = w.textContent
       w.textContent = ''
@@ -257,25 +257,39 @@ async function doMark(known) {
         w.appendChild(s)
       }
       w.classList.add('shatter')
-      setTimeout(async () => {
+      setTimeout(() => {
+        w.classList.remove('shatter')
+        w.textContent = text
         animating = false
-        await next(1)
+        showMeaning()
+        setupAuto(cur.autoAdvanceSeconds) // 重置自动切词计时，留出完整阅读时间
       }, 680)
     } else {
       const w = $('word')
       w.classList.add('wrongflash')
-      setTimeout(async () => {
+      setTimeout(() => {
         w.classList.remove('wrongflash')
         animating = false
-        await next(1)
+        showMeaning()
+        setupAuto(cur.autoAdvanceSeconds)
       }, 420)
     }
   } catch (err) {
     // IPC 异常也不能把界面冻死
     console.error('[float] doMark 失败:', err)
     animating = false
-    await next(1)
+    showMeaning()
+    setupAuto(cur.autoAdvanceSeconds)
   }
+}
+
+// 显示当前词的释义并停留在原地
+function showMeaning() {
+  if (!cur || cur.empty) return
+  flipped = true
+  const t = $('trans')
+  t.textContent = (cur.word.trans || []).join('；')
+  t.classList.remove('hidden')
 }
 
 // 鼠标交互：左键点击=翻释义，按住移动=拖窗口，长按3秒=已会，右键=切词
