@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            qwerty-learner/package-lock.json
+            moyu-lite/package-lock.json
+
+      - name: Build frontend (qwerty-learner)
+        working-directory: qwerty-learner
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build installer (electron-builder win64 NSIS)
+        working-directory: moyu-lite
+        run: |
+          npm ci
+          npx electron-builder --win
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: moyu-lite/release/*.exe
+          generate_release_notes: true
